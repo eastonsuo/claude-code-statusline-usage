@@ -28,76 +28,32 @@ Opus 4.7 (1M) │ ctx ██░░░░░░ 24% (237k) │ 5h ███░░
 
 ---
 
-## 工作原理
+## 工作原理（速览）
 
-### 1. `statusLine` 是什么
-
-Claude Code 每次需要刷新底部状态行（发请求前/后、收到 tool result 之后等）时，会执行 `~/.claude/settings.json` 里 `statusLine.command` 指定的命令，并通过 **stdin** 喂给它一段 JSON。命令的 **stdout** 会被当成状态行渲染（支持 ANSI 颜色）。
-
-stdin JSON 大致长这样：
-
-```json
-{
-  "session_id": "e150e91a-...",
-  "transcript_path": "/Users/.../.claude/projects/<encoded-cwd>/<sid>.jsonl",
-  "cwd": "/path/to/working/dir",
-  "model": { "id": "claude-opus-4-7[1m]", "display_name": "Opus 4.7 (1M context)" },
-  "version": "2.1.145",
-  "cost": {
-    "total_cost_usd": 0.8258,
-    "total_api_duration_ms": 224900,
-    "total_lines_added": 323,
-    "total_lines_removed": 1
-  },
-  "exceeds_200k_tokens": false
-}
+```
+cc 自己跟 Anthropic API 通信（你每发一条消息都在通信）
+  ↓ 响应里夹带 cost / context_window / rate_limits
+cc 把这些数字存进自己内存
+  ↓ 状态行要刷新时，序列化成 JSON 通过【管道】灌进
+   ↓
+~/.claude/statusline.py 读 stdin → 算字符串 → 写 stdout → 退出
+  ↓
+cc 把 stdout 贴到状态行
 ```
 
-`cost` 这块 cc 自己就算好了——美元数和改动行数直接用。
+整个项目本质就是一个 **30 行 stdin → stdout 过滤器**，剩下都是装饰。
 
-### 2. 上下文占用从哪儿算
+我们从 cc 的 stdin payload 拿三块关键数据：
 
-Claude Code v2 的 stdin payload 里已经把这个数算好了：
+| 字段 | 谁给的 | 用途 |
+| --- | --- | --- |
+| `cost.total_cost_usd` | cc 累计算好 | 显示 `$0.83` |
+| `context_window.used_percentage` | cc 算好（v2+） | 显示 `ctx 24%` |
+| `rate_limits.{five_hour,seven_day}` | API 响应夹带，cc 透传 | 显示 `5h 38%` / `7d 18%` |
 
-```json
-{
-  "context_window": {
-    "context_window_size": 1000000,
-    "current_usage": {
-      "input_tokens": 50, "output_tokens": 900,
-      "cache_creation_input_tokens": 11000,
-      "cache_read_input_tokens": 225950
-    },
-    "used_percentage": 24.0,
-    "remaining_percentage": 76.0
-  }
-}
-```
+> ⚠️ `rate_limits` 只对 **Claude.ai 订阅用户**有效，且只在**首次发请求之后**才出现。非订阅或新会话还没说话时，5h / 7d 两列自动消失（这不是 bug）。
 
-直接用 `used_percentage` 即可。脚本里**保留了 fallback**——解析 `transcript_path` 指向的 JSONL 自己算（兼容更老版本的 cc），逻辑是把最后一次 turn 的 `input_tokens + cache_read + cache_creation` 加起来除以模型窗口大小。
-
-- `input_tokens`：本轮新增、未缓存的输入
-- `cache_read_input_tokens`：从 prompt cache 命中的部分（1 折计费）
-- `cache_creation_input_tokens`：本轮新写入 cache 的部分（贵 25% 但只付一次）
-
-### 3. 订阅额度（5h / 7d）从哪儿算
-
-也在 stdin payload 里直接给了：
-
-```json
-{
-  "rate_limits": {
-    "five_hour":  { "used_percentage": 23, "resets_at": 1716345600 },
-    "seven_day":  { "used_percentage": 12, "resets_at": 1716950400 }
-  }
-}
-```
-
-`resets_at` 是 Unix 时间戳，脚本里 `time.time()` 减一下就是「还有多久重置」。
-
-> ⚠️ `rate_limits` 是 **Claude.ai 订阅用户**专享，且只在**首次发请求之后**才出现。所以非订阅用户、刚起新会话还没说话之前，5h / 7d 两列**会自动消失**（renderer 返回 `None` 跳过）。这不是 bug。
-
-> Opus 4.7 普通版窗口 200k；带 `[1m]` 后缀的是 1M 窗口。Sonnet 4.6 类似。脚本里 `CONTEXT_LIMITS` dict 维护 fallback 路径的映射，新模型出来加一行即可（但 v2 默认走 `context_window.used_percentage`，不依赖这个表）。
+> 想完整理解为什么这么设计、stdin / 管道 / 扩展点是什么、cc 还有哪些扩展接口——见 **[docs/PRINCIPLES.zh.md](docs/PRINCIPLES.zh.md)**（小白友好的深度版）。
 
 ---
 
@@ -241,8 +197,8 @@ rm ~/.claude/statusline.py
 ## 已知限制
 
 - `statusLine.command` 由 cc 通过 shell 调用，所以 `$HOME` 能展开；如果未来某个版本改成直接 `execve`，把命令换成绝对路径即可。
-- 上下文窗口大小是写死在 `CONTEXT_LIMITS` 里的，新模型需手动加。
-- 状态行不是按秒刷新，是「事件触发时」刷新（每次模型调用、工具调用前后等）。够用，但不是真实时。
+- 状态行不是按秒刷新，是「事件触发时」刷新（每次模型调用、工具调用前后等）。所以 `5h` 的 ETA 不会"嘀嗒嘀嗒"倒数——等下次发消息时才更新。够用但不是真实时。
+- `CONTEXT_LIMITS` dict 只对老版本 cc 的 fallback 路径生效；v2+ 用 stdin payload 里 cc 算好的 `context_window.used_percentage`，无需维护新模型。
 
 ---
 
