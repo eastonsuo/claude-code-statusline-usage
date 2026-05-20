@@ -6,6 +6,8 @@ and in what order. Available columns:
 
   model    bold cyan model display name
   ctx      live context-window usage (bar + % + token count, color-coded)
+  5h       Claude.ai 5-hour session limit: remaining % + reset ETA (subscribers only)
+  7d       Claude.ai 7-day weekly limit: remaining % + reset ETA (subscribers only)
   cost     session cost in USD (2 decimals if ≥ $0.01, else 4)
   tokens   cumulative Σ in / out / cache_r / cache_w
   diff     lines added/removed (+N -M)
@@ -14,9 +16,9 @@ and in what order. Available columns:
 
 CLI flags (parsed by hand; no argparse dependency):
 
-  --columns=model,ctx,cost,diff,api,cwd   default
-  --sep=" │ "                              separator between fields
-  --no-color                               strip ANSI (e.g. for piping/tests)
+  --columns=model,ctx,5h,7d,cost,diff,cwd   default
+  --sep=" │ "                                separator between fields
+  --no-color                                 strip ANSI (e.g. for piping/tests)
 
 These can also be set via env vars CC_STATUSLINE_COLUMNS and CC_STATUSLINE_SEP
 for users who'd rather configure once in their shell rc.
@@ -26,10 +28,12 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
-DEFAULT_COLUMNS = "model,ctx,cost,diff,api,cwd"
+DEFAULT_COLUMNS = "model,ctx,5h,7d,cost,diff,cwd"
 DEFAULT_SEP = " │ "
+BAR_WIDTH = 8
 
 # Context window per model id. Anything not listed falls back to 200k unless
 # the payload signals exceeds_200k_tokens.
@@ -63,12 +67,42 @@ def fmt_num(n: int) -> str:
     return str(n)
 
 
+def fmt_eta(seconds: float) -> str:
+    """Human relative time, e.g. '4h12m', '3d4h', '45m', '30s', 'now'."""
+    if seconds <= 0:
+        return "now"
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{int(minutes)}m"
+    hours = minutes / 60
+    if hours < 24:
+        h = int(hours)
+        m = int(round((hours - h) * 60))
+        if m == 60:
+            return f"{h + 1}h"
+        return f"{h}h{m:02d}m" if m else f"{h}h"
+    days = hours / 24
+    d = int(days)
+    h = int(round((days - d) * 24))
+    if h == 24:
+        return f"{d + 1}d"
+    return f"{d}d{h}h" if h else f"{d}d"
+
+
 def pick_color(pct: float, scale: tuple[float, float] = (50.0, 80.0)) -> str:
+    """pct = severity (higher = worse). Use for `used %` semantics."""
     if pct < scale[0]:
         return GREEN
     if pct < scale[1]:
         return YELLOW
     return RED
+
+
+def make_bar(pct: float, width: int = BAR_WIDTH) -> str:
+    filled = max(0, min(width, int(round(pct / 100.0 * width))))
+    return "█" * filled + "░" * (width - filled)
 
 
 def parse_transcript(path: str | None) -> dict | None:
@@ -123,6 +157,21 @@ def col_model(c: dict) -> str | None:
 
 
 def col_ctx(c: dict) -> str | None:
+    # Prefer Claude Code's pre-calculated context_window field (cc ≥ 2.x).
+    cw = c.get("context_window") or {}
+    used_pct = cw.get("used_percentage")
+    if used_pct is not None:
+        cur = cw.get("current_usage") or {}
+        ctx_now = (
+            int(cur.get("input_tokens", 0) or 0)
+            + int(cur.get("cache_read_input_tokens", 0) or 0)
+            + int(cur.get("cache_creation_input_tokens", 0) or 0)
+        )
+        pct = float(used_pct)
+        color = pick_color(pct)
+        return f"{color}ctx {make_bar(pct)} {pct:.0f}% ({fmt_num(ctx_now)}){RESET}"
+
+    # Fallback: derive from JSONL transcript (older cc versions).
     usage = c["usage"]
     if not usage or not isinstance(usage.get("last"), dict):
         return None
@@ -135,10 +184,36 @@ def col_ctx(c: dict) -> str | None:
     limit = c["limit"]
     pct = (ctx_now / limit * 100.0) if limit else 0.0
     color = pick_color(pct)
-    bar_width = 10
-    filled = max(0, min(bar_width, int(round(pct / 100.0 * bar_width))))
-    bar = "█" * filled + "░" * (bar_width - filled)
-    return f"{color}ctx {bar} {pct:.0f}% ({fmt_num(ctx_now)}){RESET}"
+    return f"{color}ctx {make_bar(pct)} {pct:.0f}% ({fmt_num(ctx_now)}){RESET}"
+
+
+def _col_rate(window_key: str, label: str):
+    """Build a renderer for rate_limits.<window_key>.
+
+    Matches Claude.ai's Plan usage limits UI: bar fills with USED %,
+    number is USED %, color reddens as it approaches the limit.
+    Suffix shows time-to-reset like '↻2h53m'.
+    """
+    def render(c: dict) -> str | None:
+        rl = c.get("rate_limits") or {}
+        info = rl.get(window_key)
+        if not isinstance(info, dict):
+            return None
+        used = info.get("used_percentage")
+        resets_at = info.get("resets_at")
+        if used is None:
+            return None
+        used_pct = max(0.0, min(100.0, float(used)))
+        color = pick_color(used_pct, scale=(50.0, 80.0))
+        eta = ""
+        if isinstance(resets_at, (int, float)) and resets_at > 0:
+            eta = f" ↻{fmt_eta(float(resets_at) - time.time())}"
+        return f"{color}{label} {make_bar(used_pct)} {used_pct:.0f}%{eta}{RESET}"
+    return render
+
+
+col_5h = _col_rate("five_hour", "5h")
+col_7d = _col_rate("seven_day", "7d")
 
 
 def col_cost(c: dict) -> str | None:
@@ -184,6 +259,8 @@ def col_cwd(c: dict) -> str | None:
 COLUMNS = {
     "model": col_model,
     "ctx": col_ctx,
+    "5h": col_5h,
+    "7d": col_7d,
     "cost": col_cost,
     "tokens": col_tokens,
     "diff": col_diff,
@@ -244,7 +321,13 @@ def main() -> int:
         "lines_added": int(cost.get("total_lines_added") or 0),
         "lines_removed": int(cost.get("total_lines_removed") or 0),
         "cwd_base": os.path.basename(cwd.rstrip("/")) or cwd,
-        "usage": parse_transcript(payload.get("transcript_path")),
+        "context_window": payload.get("context_window"),
+        "rate_limits": payload.get("rate_limits"),
+        # transcript parsing only kicks in when context_window is absent
+        "usage": (
+            None if isinstance(payload.get("context_window"), dict)
+            else parse_transcript(payload.get("transcript_path"))
+        ),
     }
 
     cols = [c.strip() for c in args["columns"].split(",") if c.strip()]
