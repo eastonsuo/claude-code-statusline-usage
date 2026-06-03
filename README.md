@@ -6,9 +6,10 @@
 
 给 Claude Code 终端加一行**实时用量**信息（接在输入框正上方），显示当前模型、上下文窗口占用、Claude.ai 订阅的 5 小时窗口 / 周用量、累计花费、改动行数和工作目录。每一列**可开关、可重排**。
 
-实际运行截图：
-
-![claude-code-statusline-usage — Claude Code 终端实时用量状态行截图](docs/statusline.png)
+<p align="center">
+  <img src="docs/statusline.png" alt="claude-code-statusline-usage — Claude Code 终端实时用量状态行" width="820"><br>
+  <sub>实际运行截图</sub>
+</p>
 
 ```
 Opus 4.7 (1M) │ ctx ██░░░░░░ 24% (237k) │ 5h ███░░░░░ 38% ↻2h53m │ 7d █░░░░░░░ 18% ↻10h33m │ $0.83 │ +42 -3 │ claude_code_patch
