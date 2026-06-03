@@ -1,72 +1,74 @@
 # claude-code-statusline-usage
 
-> A non-invasive **realtime usage statusline for Claude Code** — shows the current model, context-window %, your Claude.ai 5-hour / 7-day (weekly) rate-limit usage, session cost, and diff stats, right above the prompt. Pure-stdlib Python, wired in through the official `statusLine` extension point: no app-bundle patching, survives upgrades. Every column is toggleable and reorderable.
+**English** · [简体中文](README.zh-CN.md)
+
+> A non-invasive **realtime usage status line for Claude Code** — shows the current model, context-window %, your Claude.ai 5-hour / 7-day (weekly) rate-limit usage, session cost, and diff stats, right above the prompt. Pure-stdlib Python, wired in through the official `statusLine` extension point: no app-bundle patching, survives upgrades. Every column is toggleable and reorderable.
 >
 > Keywords: Claude Code, Claude.ai usage, rate limit, 5-hour limit, weekly usage, Max plan, context window, token usage, cost tracker, terminal status line.
 
-给 Claude Code 终端加一行**实时用量**信息（接在输入框正上方），显示当前模型、上下文窗口占用、Claude.ai 订阅的 5 小时窗口 / 周用量、累计花费、改动行数和工作目录。每一列**可开关、可重排**。
+Adds one **realtime usage** line to your Claude Code terminal (right above the input box): current model, context-window usage, your Claude.ai 5-hour window / weekly usage, cumulative cost, changed line count, and working directory. Every column is **toggleable and reorderable**.
 
 <p align="center">
-  <img src="docs/statusline.png" alt="claude-code-statusline-usage — Claude Code 终端实时用量状态行" width="820"><br>
-  <sub>实际运行截图</sub>
+  <img src="docs/statusline.png" alt="claude-code-statusline-usage — realtime usage status line in the Claude Code terminal" width="820"><br>
+  <sub>Live screenshot</sub>
 </p>
 
 ```
 Opus 4.7 (1M) │ ctx ██░░░░░░ 24% (237k) │ 5h ███░░░░░ 38% ↻2h53m │ 7d █░░░░░░░ 18% ↻10h33m │ $0.83 │ +42 -3 │ claude_code_patch
 ```
 
-跟 Claude.ai 「Plan usage limits」页面**保持同向**：bar 显示**已用**比例，数字也是已用 %，越接近上限越红。
+It stays **in the same direction** as Claude.ai's "Plan usage limits" page: the bar shows the **used** ratio, the number is also used %, and it gets redder as you approach the limit.
 
-颜色规则（三个进度条统一标准）：
-- <50% 绿 / 50–80% 黄 / ≥80% 红
-- `↻` 后面是距下次重置的相对时间（`2h53m` / `10h33m` / `3d4h` / `45m` / `30s`）
+Color rules (shared by all three progress bars):
+- <50% green / 50–80% yellow / ≥80% red
+- After `↻` is the relative time until the next reset (`2h53m` / `10h33m` / `3d4h` / `45m` / `30s`)
 
 ---
 
-## 为什么是「不侵入」的？
+## Why is it "non-invasive"?
 
-完全没有修改 Claude Code 自己的程序文件。整套方案只动用户私有的两处：
+It modifies none of Claude Code's own program files. The whole thing only touches two user-private locations:
 
-| 路径 | 谁的 | 升级会被覆盖吗 |
+| Path | Whose | Overwritten on upgrade? |
 | --- | --- | --- |
-| `/Applications/Claude.app/...` | Claude Code 程序本体 | —（**没动**） |
-| `~/.claude/settings.json` | 用户配置 | ❌ 升级不动 |
-| `~/.claude/statusline.py` | 用户脚本（这次新加的） | ❌ 升级不动 |
+| `/Applications/Claude.app/...` | the Claude Code app itself | — (**untouched**) |
+| `~/.claude/settings.json` | user config | ❌ upgrade leaves it |
+| `~/.claude/statusline.py` | user script (added here) | ❌ upgrade leaves it |
 
-走的是 Claude Code 文档里公开的扩展点 **`statusLine`**——跨版本稳定。cc 升到 v2.x / v3.x 都不会影响。卸载只要删掉 settings.json 里 `statusLine` 那段即可，零残留。
+It uses the publicly documented **`statusLine`** extension point — stable across versions. cc upgrading to v2.x / v3.x won't affect it. To uninstall, just delete the `statusLine` block in settings.json — zero residue.
 
 ---
 
-## 工作原理（速览）
+## How it works (at a glance)
 
 ```
-cc 自己跟 Anthropic API 通信（你每发一条消息都在通信）
-  ↓ 响应里夹带 cost / context_window / rate_limits
-cc 把这些数字存进自己内存
-  ↓ 状态行要刷新时，序列化成 JSON 通过【管道】灌进
+cc talks to the Anthropic API itself (every message you send is a round trip)
+  ↓ the response carries cost / context_window / rate_limits
+cc stores these numbers in its own memory
+  ↓ when the status line refreshes, it serializes them to JSON and pipes them in
    ↓
-~/.claude/statusline.py 读 stdin → 算字符串 → 写 stdout → 退出
+~/.claude/statusline.py reads stdin → computes a string → writes stdout → exits
   ↓
-cc 把 stdout 贴到状态行
+cc pastes stdout into the status line
 ```
 
-整个项目本质就是一个 **30 行 stdin → stdout 过滤器**，剩下都是装饰。
+The whole project is essentially a **30-line stdin → stdout filter**; everything else is decoration.
 
-我们从 cc 的 stdin payload 拿三块关键数据：
+We take three key pieces of data from cc's stdin payload:
 
-| 字段 | 谁给的 | 用途 |
+| Field | Who provides it | Used for |
 | --- | --- | --- |
-| `cost.total_cost_usd` | cc 累计算好 | 显示 `$0.83` |
-| `context_window.used_percentage` | cc 算好（v2+） | 显示 `ctx 24%` |
-| `rate_limits.{five_hour,seven_day}` | API 响应夹带，cc 透传 | 显示 `5h 38%` / `7d 18%` |
+| `cost.total_cost_usd` | accumulated by cc | shows `$0.83` |
+| `context_window.used_percentage` | computed by cc (v2+) | shows `ctx 24%` |
+| `rate_limits.{five_hour,seven_day}` | carried in API responses, passed through by cc | shows `5h 38%` / `7d 18%` |
 
-> ⚠️ `rate_limits` 只对 **Claude.ai 订阅用户**有效，且只在**首次发请求之后**才出现。非订阅或新会话还没说话时，5h / 7d 两列自动消失（这不是 bug）。
+> ⚠️ `rate_limits` only exists for **Claude.ai subscribers**, and only **after the first request**. For non-subscribers or a fresh session that hasn't sent anything yet, the 5h / 7d columns disappear automatically (this is not a bug).
 
-> 想完整理解为什么这么设计、stdin / 管道 / 扩展点是什么、cc 还有哪些扩展接口——见 **[docs/PRINCIPLES.zh.md](docs/PRINCIPLES.zh.md)**（小白友好的深度版）。
+> To fully understand the design — what stdin / pipes / extension points are, and which other extension interfaces cc has — see **[docs/PRINCIPLES.zh.md](docs/PRINCIPLES.zh.md)** (a beginner-friendly deep dive, in Chinese).
 
 ---
 
-## 安装
+## Install
 
 ```bash
 git clone https://github.com/eastonsuo/claude-code-statusline-usage.git
@@ -74,10 +76,10 @@ cd claude-code-statusline-usage
 ./install.sh
 ```
 
-脚本干两件事：
+The script does two things:
 
 1. `install -m 0755 statusline.py ~/.claude/statusline.py`
-2. 用 Python merge 一段 `statusLine` 进 `~/.claude/settings.json`（保留原有所有 key，原文件若非合法 JSON 会先备份成 `.bak`）：
+2. Merges a `statusLine` block into `~/.claude/settings.json` with Python (preserving all existing keys; if the original file isn't valid JSON it is backed up to `.bak` first):
 
    ```json
    "statusLine": {
@@ -87,13 +89,13 @@ cd claude-code-statusline-usage
    }
    ```
 
-**重启 / 新开** Claude Code 会话即可看到。已在进行中的会话需要 `/exit` 再 `claude` 重进。
+**Restart / open a new** Claude Code session to see it. A session already in progress needs `/exit` then `claude` to re-enter.
 
 ---
 
-## 配置：哪些列显示、按什么顺序
+## Configure: which columns show, and in what order
 
-通过 `--columns=<csv>` 参数指定要显示的列和顺序。改 `~/.claude/settings.json`：
+Use the `--columns=<csv>` argument to set the columns and their order. Edit `~/.claude/settings.json`:
 
 ```json
 "statusLine": {
@@ -103,56 +105,56 @@ cd claude-code-statusline-usage
 }
 ```
 
-### 可用的列
+### Available columns
 
-| 列名 | 显示什么 | 默认开 |
+| Column | Shows | On by default |
 | --- | --- | --- |
-| `model` | 当前模型，如 `Opus 4.7 (1M)` | ✅ |
-| `ctx` | 上下文占用进度条 `ctx ██░░░░░░ 24% (237k)`，按占用变色 | ✅ |
-| `5h` | Claude.ai 5 小时窗口**已用** % + 重置 ETA，如 `5h ███░░░░░ 38% ↻2h53m` | ✅ |
-| `7d` | Claude.ai 7 天周用量**已用** % + 重置 ETA，如 `7d █░░░░░░░ 18% ↻10h33m` | ✅ |
-| `cost` | 本会话累计花费，如 `$0.83`（≥$0.01 用 2 位小数，否则 4 位） | ✅ |
-| `tokens` | 累计 token 明细：`Σ in 122 · out 93.9k · cache_r 10.76M · cache_w 383k` | ❌ |
-| `diff` | 本会话代码改动行数，如 `+42 -3` | ✅ |
-| `api` | 累计 API 耗时，如 `api 224.9s` | ❌ |
-| `cwd` | 当前目录 basename | ✅ |
+| `model` | current model, e.g. `Opus 4.7 (1M)` | ✅ |
+| `ctx` | context-usage bar `ctx ██░░░░░░ 24% (237k)`, colored by usage | ✅ |
+| `5h` | Claude.ai 5-hour window **used** % + reset ETA, e.g. `5h ███░░░░░ 38% ↻2h53m` | ✅ |
+| `7d` | Claude.ai 7-day weekly **used** % + reset ETA, e.g. `7d █░░░░░░░ 18% ↻10h33m` | ✅ |
+| `cost` | session cumulative cost, e.g. `$0.83` (2 decimals if ≥$0.01, else 4) | ✅ |
+| `tokens` | cumulative token breakdown: `Σ in 122 · out 93.9k · cache_r 10.76M · cache_w 383k` | ❌ |
+| `diff` | lines changed this session, e.g. `+42 -3` | ✅ |
+| `api` | cumulative API time, e.g. `api 224.9s` | ❌ |
+| `cwd` | current directory basename | ✅ |
 
-**默认配置**：`model,ctx,5h,7d,cost,diff,cwd`。`5h` / `7d` 在非订阅用户或刚起会话时**会自动空着**（不会占位、不会报错）。
+**Default config**: `model,ctx,5h,7d,cost,diff,cwd`. `5h` / `7d` are **left empty automatically** for non-subscribers or a just-started session (no placeholder, no error).
 
-### 常用配方
+### Common recipes
 
-只关心钱和上下文：
+Only money and context:
 ```json
 "command": "$HOME/.claude/statusline.py --columns=model,ctx,cost"
 ```
 
-订阅用户最关心额度：
+Subscribers who care most about quota:
 ```json
 "command": "$HOME/.claude/statusline.py --columns=5h,7d,ctx,cwd"
 ```
 
-什么都想看（含 token 明细）：
+Show everything (incl. token breakdown):
 ```json
 "command": "$HOME/.claude/statusline.py --columns=model,ctx,5h,7d,cost,tokens,diff,api,cwd"
 ```
 
-极简：
+Minimal:
 ```json
 "command": "$HOME/.claude/statusline.py --columns=5h,cost"
 ```
 
-### 其它参数
+### Other arguments
 
-| 参数 | 作用 | 默认 |
+| Argument | Effect | Default |
 | --- | --- | --- |
-| `--sep=" • "` | 改列间分隔符 | `" │ "` |
-| `--no-color` | 不输出 ANSI 颜色（管道/测试用） | 关 |
+| `--sep=" • "` | change the column separator | `" │ "` |
+| `--no-color` | don't emit ANSI colors (for pipes/testing) | off |
 
-也可以用环境变量替代：`CC_STATUSLINE_COLUMNS`、`CC_STATUSLINE_SEP`。CLI 参数优先级更高。
+You can also use environment variables: `CC_STATUSLINE_COLUMNS`, `CC_STATUSLINE_SEP`. CLI args take precedence.
 
 ---
 
-## 自检（不进 cc 也能验证）
+## Self-test (verify without entering cc)
 
 ```bash
 NOW=$(date +%s)
@@ -174,40 +176,40 @@ cat <<EOF | ~/.claude/statusline.py --no-color; echo
 EOF
 ```
 
-加 `--columns=...` 看不同组合效果；去掉 `--no-color` 看真彩色。
+Add `--columns=...` to see different combinations; drop `--no-color` to see true color.
 
 ---
 
-## 卸载
+## Uninstall
 
 ```bash
-# 1. 编辑 ~/.claude/settings.json，删掉 "statusLine": { ... } 那段
+# 1. Edit ~/.claude/settings.json and delete the "statusLine": { ... } block
 $EDITOR ~/.claude/settings.json
 
-# 2. 删脚本
+# 2. Remove the script
 rm ~/.claude/statusline.py
 ```
 
 ---
 
-## 自定义（改源码层级）
+## Customize (source level)
 
-| 想改 | 改哪儿 |
+| Want to change | Where |
 | --- | --- |
-| 颜色阈值（绿/黄/红） | `pick_color` 里的 `scale=(50.0, 80.0)` |
-| 新模型上下文窗口 | 顶部 `CONTEXT_LIMITS` dict |
-| 加一列（比如显示 git branch） | 写一个 `col_xxx(c)` 函数，注册到 `COLUMNS` dict |
-| 千分位/单位格式 | `fmt_num` 函数 |
+| Color thresholds (green/yellow/red) | `scale=(50.0, 80.0)` in `pick_color` |
+| Context window for a new model | the `CONTEXT_LIMITS` dict at the top |
+| Add a column (e.g. git branch) | write a `col_xxx(c)` function, register it in the `COLUMNS` dict |
+| Thousands separators / unit formatting | the `fmt_num` function |
 
-脚本零外部依赖，只用 Python 3 标准库（`json` / `os` / `sys` / `pathlib` / `re`）。
+The script has zero external dependencies — only the Python 3 standard library (`json` / `os` / `sys` / `pathlib` / `re`).
 
 ---
 
-## 已知限制
+## Known limitations
 
-- `statusLine.command` 由 cc 通过 shell 调用，所以 `$HOME` 能展开；如果未来某个版本改成直接 `execve`，把命令换成绝对路径即可。
-- 状态行不是按秒刷新，是「事件触发时」刷新（每次模型调用、工具调用前后等）。所以 `5h` 的 ETA 不会"嘀嗒嘀嗒"倒数——等下次发消息时才更新。够用但不是真实时。
-- `CONTEXT_LIMITS` dict 只对老版本 cc 的 fallback 路径生效；v2+ 用 stdin payload 里 cc 算好的 `context_window.used_percentage`，无需维护新模型。
+- `statusLine.command` is invoked by cc through a shell, so `$HOME` expands; if some future version switches to a direct `execve`, just use an absolute path.
+- The status line doesn't refresh every second — it refreshes "on events" (each model call, before/after tool calls, etc.). So the `5h` ETA doesn't tick down second by second; it updates the next time you send a message. Good enough, but not truly real-time.
+- The `CONTEXT_LIMITS` dict only matters for the fallback path on older cc; v2+ uses `context_window.used_percentage` already computed by cc in the stdin payload, so there's no need to maintain new models.
 
 ---
 
