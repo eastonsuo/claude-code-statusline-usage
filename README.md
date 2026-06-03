@@ -1,5 +1,9 @@
 # claude-code-statusline-usage
 
+> A non-invasive **realtime usage statusline for Claude Code** — shows the current model, context-window %, your Claude.ai 5-hour / 7-day (weekly) rate-limit usage, session cost, and diff stats, right above the prompt. Pure-stdlib Python, wired in through the official `statusLine` extension point: no app-bundle patching, survives upgrades. Every column is toggleable and reorderable.
+>
+> Keywords: Claude Code, Claude.ai usage, rate limit, 5-hour limit, weekly usage, Max plan, context window, token usage, cost tracker, terminal status line.
+
 给 Claude Code 终端加一行**实时用量**信息（接在输入框正上方），显示当前模型、上下文窗口占用、Claude.ai 订阅的 5 小时窗口 / 周用量、累计花费、改动行数和工作目录。每一列**可开关、可重排**。
 
 实际运行截图：
