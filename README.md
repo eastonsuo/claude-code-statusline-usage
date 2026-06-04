@@ -213,6 +213,10 @@ The script has zero external dependencies — only the Python 3 standard library
 
 ---
 
+## Related
+
+- **[claude-desktop-usage](https://github.com/eastonsuo/claude-desktop-usage)** — a macOS menu-bar widget for your Claude.ai 5-hour / weekly usage, without opening the browser.
+
 ## License
 
 MIT

@@ -213,6 +213,10 @@ rm ~/.claude/statusline.py
 
 ---
 
+## 相关项目
+
+- **[claude-desktop-usage](https://github.com/eastonsuo/claude-desktop-usage)** —— macOS 菜单栏小组件，不开浏览器就能看 Claude.ai 的 5 小时 / 周用量。
+
 ## License
 
 MIT
